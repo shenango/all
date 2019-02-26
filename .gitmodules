@@ -19,6 +19,3 @@
 [submodule "memcached-ix"]
 	path = memcached-ix
 	url = git@github.com:ix-project/memcached.git
-[submodule "memcached-arachne"]
-	path = memcached-arachne
-	url = git@github.com:PlatformLab/memcached-A.git
