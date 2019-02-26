@@ -1,0 +1,13 @@
+diff --git a/iokernel/cores.c b/iokernel/cores.c
+index b05ee1a..a4876ac 100644
+--- a/iokernel/cores.c
++++ b/iokernel/cores.c
+@@ -834,7 +834,7 @@ int cores_init(void)
+ 		if (i != j)
+ 			continue;
+ #endif
+-
++		if ((i > 14 && i < 24) || i > 38) continue;
+ 		if (cpu_info_tbl[i].package == 0)
+ 			core_init(i);
+ 	}
