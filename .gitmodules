@@ -19,3 +19,9 @@
 [submodule "memcached-ix"]
 	path = memcached-ix
 	url = git@github.com:ix-project/memcached.git
+[submodule "memcached-linux"]
+	path = memcached-linux
+	url = git@github.com:shenango/memcached.git
+[submodule "memcached-arachne"]
+	path = memcached-arachne
+	url = git@github.com:shenango/memcached.git
