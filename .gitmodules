@@ -1,0 +1,24 @@
+[submodule "shenango"]
+	path = shenango
+	url = git@github.com:shenango/shenango.git
+[submodule "memcached"]
+	path = memcached
+	url = git@github.com:shenango/memcached.git
+[submodule "gdnsd"]
+	path = gdnsd
+	url = git@github.com:shenango/gdnsd.git
+[submodule "parsec"]
+	path = parsec
+	url = git@github.com:shenango/parsec.git
+[submodule "bench"]
+	path = bench
+	url = git@github.com:shenango/bench.git
+[submodule "zygos"]
+	path = zygos
+	url = git@github.com:ix-project/zygos.git
+[submodule "memcached-ix"]
+	path = memcached-ix
+	url = git@github.com:ix-project/memcached.git
+[submodule "memcached-arachne"]
+	path = memcached-arachne
+	url = git@github.com:PlatformLab/memcached-A.git
