@@ -25,3 +25,6 @@
 [submodule "memcached-arachne"]
 	path = memcached-arachne
 	url = git@github.com:shenango/memcached.git
+[submodule "gdnsd-linux"]
+	path = gdnsd-linux
+	url = git@github.com:shenango/gdnsd.git

@@ -1,6 +1,13 @@
 # shenango-all
 Shenango, applications, benchmarks, and other systems evaluated.
 
+## Installing prereqs
+```
+sudo apt install build-essential libnuma-dev clang autoconf autotools-dev m4 automake libevent-dev  libpcre++-dev libtool ragel libev-dev moreutils parallel
+```
+Install rust, and use the nightly toolchain. See http://rust-lang.org/ for details.
+
+
 ## Compiling
 To build everything for Shenango, Linux, and Arachne:
 ```
