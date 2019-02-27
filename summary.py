@@ -7,13 +7,7 @@ import sys
 from collections import defaultdict
 import re
 
-USE_PARALLEL = False # Useful for reading many large files
 DISPLAYED_RSTAT_FIELDS = ["parks", "p_rx_ooo", "p_reorder_time"]
-
-import matplotlib as mpl
-mpl.use('Agg')
-import matplotlib.pyplot as plt
-plt.rcParams['lines.markersize'] /= 8
 
 def percentile(latd, target):
     # latd: ({microseconds: count}, number_dropped)
@@ -28,9 +22,8 @@ def percentile(latd, target):
             return k
     return float("inf")
 
-
 def read_lat_line(line):
-# returns: latencies as {microseconds: count}
+    #line = line.split(" ", 1)[1]
     if line.startswith("Latencies: "):
         line = line[len("Latencies: "):]
     d = {}
@@ -64,13 +57,11 @@ def merge_lat(list_of_tuples):
     return c, dropped
 
 
-def parse_file(filename):
-    machine, app, out = os.path.basename(filename).split(".")
-    machine = machine.split("-")[-1]
-    assert out == "out" and machine.startswith("pd") or machine in ["zig", "zag"]
+def parse_loadgen_output(filename):
     with open(filename) as f:
         dat = f.read()
-    experiments = []
+
+    samples = []
 
     line_starts = ["Latencies: ", "Trace: ", "zero, ","exponential, ",
                    "bimodal1, ", "constant, "]
@@ -83,100 +74,92 @@ def parse_file(filename):
     """Distribution, Target, Actual, Dropped, Never Sent, Median, 90th, 99th, 99.9th, 99.99th, Start"""
     header_line = None
     for line in dat.splitlines():
+	#line = line.split(" ", 1)[1]
         line_start = get_line_start(line)
         if not line_start: continue
         if line_start == "Latencies: ":
-            experiments.append({
+            samples.append({
                 'distribution': header_line[0],
-                'target': int(header_line[1]),
+                'offered': int(header_line[1]),
                 'achieved': int(header_line[2]),
                 'missed': int(header_line[4]),
                 'latencies': (read_lat_line(line), int(header_line[3])),
-                # 'dat': [(header_line, line)],
-                'time': int(header_line[10]) if len(header_line) > 10 else None,
-                'app': app,
+                'time': int(header_line[10]),
             })
         elif line_start == "Trace: ":
             lats, tracepoints = read_trace_line(line)
-            experiments.append({
+            samples.append({
                 'distribution': header_line[0],
-                'target': int(header_line[1]),
+                'offered': int(header_line[1]),
                 'achieved': int(header_line[2]),
                 'missed': int(header_line[4]),
                 'latencies': (lats, int(header_line[3])),
                 'tracepoints': tracepoints,
-                # 'dat': [(header_line, line)],
-                'time': int(header_line[10]) if len(header_line) > 10 else None,
-                'app': app,
+                'time': int(header_line[10]),
             })
         else:
             header_line = line.strip().split(", ")
+            assert len(header_line) > 10 or len(header_line) == 6, line
             if len(header_line) == 6:
-                experiments.append({
-                'distribution': header_line[0],
-                'target': 0,
-                'achieved': 0,
-                'missed': int(header_line[4]),
-                'latencies': ({}, int(header_line[3])),
-                'time': int(header_line[5]),
-                'app': app,
+                 samples.append({
+                 'distribution': header_line[0],
+                 'offered': int(header_line[1]),
+                 'achieved': 0,
+                 'missed': int(header_line[4]),
+                 'latencies': ({}, int(header_line[3])),
+                 'time': int(header_line[5]),
             })
-    return experiments
+    return samples
 
 
-def merge_experiments(a, b):
-    experiments = []
+def merge_sample_sets(a, b):
+    samples = []
     for ea, eb in zip(a, b):
         assert set(ea.keys()) == set(eb.keys())
         assert ea['distribution'] == eb['distribution']
-        assert ea['app'] == eb['app']
+        # assert ea['app'] == eb['app']
         assert abs(ea['time'] - eb['time']) < 2
         newexp = {
             'distribution': ea['distribution'],
-            'target': ea['target'] + eb['target'],
+            'offered': ea['offered'] + eb['offered'],
             'achieved': ea['achieved'] + eb['achieved'],
             'missed': ea['missed'] + eb['missed'],
             'latencies': merge_lat([ea['latencies'], eb['latencies']]),
-            # 'dat': ea['dat'] + eb['dat'],
-            'app': ea['app'],
+            # 'app': ea['app'],
             'time': min(ea['time'], eb['time']),
         }
         if 'tracepoints' in ea:
             newexp['tracepoints'] = ea['tracepoints'] + eb['tracepoints']
-        experiments.append(newexp)
+        samples.append(newexp)
         assert set(ea.keys()) == set(newexp.keys())
-    return experiments
+    return samples
 
-def thelats(latd):
-    return [
-        percentile(latd, 0.5),
-        percentile(latd, 0.9),
-        percentile(latd, 0.99),
-        percentile(latd, 0.999),
-        percentile(latd, 0.9999)
-    ]
+def except_none(func):
+	def e(*args, **kwargs):
+		try:
+			return func(*args, **kwargs)
+		except:
+			return None
+	return e
 
+@except_none
+def load_app_output(app, directory, first_sample_time):
 
-def parse_bg(dirn, files, first_exp_time):
-    patterns = ["background_work.log", "swaptions.*out", "x264.*out"]
-    bgfiles = [f for f in files for p in patterns if re.match(p, f)]
-    if bgfiles:
-        assert len(bgfiles) == 1
-        with open(dirn + "/" + bgfiles[0]) as f:
-            bgdata = f.read()
-    else:
-        return "None", 0, None
+    parse_bg_key = {
+        'swaptions': ("Swaption per second: ", None),
+        'x264': ("/512 frames, ", " fps"),
+        'stress': ("fakework rate: ", None)
+    }
+    #fixme
+    if app['app'] not in parse_bg_key.keys():
+        return None
 
-    if "Swaption" in bgdata:
-        token_l = "Swaption per second: "
-        token_r = None
-        app = "swaptions"
-    elif "x264" in bgdata:
-        token_l = "/512 frames, "
-        token_r = " fps,"
-        app = "x264"
-    else:
-        assert False
+    filename = "{}/{}.out".format(directory, app['name'])
+    assert os.access(filename, os.F_OK)
+    with open(filename) as f:
+        bgdata = f.read()
+
+    token_l, token_r = parse_bg_key.get(app['app'])
 
     lines = filter(lambda l: token_l in l, bgdata.splitlines())
     lines = map(lambda l: l.split(" ", 1), lines)
@@ -194,12 +177,37 @@ def parse_bg(dirn, files, first_exp_time):
     x = datapoints[1:11]
 
     baseline = None
-    if all([l[0] < first_exp_time for l in x]):
+    if all([l[0] < first_sample_time for l in x]):
         baseline = sum([l[1] for l in x]) / len(x)
 
-    return app, baseline, datapoints
+    return {
+        'recorded_baseline': baseline,
+        'recorded_samples': datapoints
+    }
 
+@except_none
+def parse_iokernel_log(dirn, experiment):
+    fname = "{dirn}/iokernel.{server_hostname}.log".format(
+        dirn=dirn, **experiment)
+    with open(fname) as f:
+        data = f.read()
+        int(data.split()[0])
 
+    stats = defaultdict(list)
+    data = data.split(" Stats:")[1:]
+    for d in data:
+        RX_P = None
+        for line in d.strip().splitlines():
+            if "eth stats for port" in line: continue
+            dats = line.split()
+            tm = int(dats[0])
+            for stat_name, stat_val in zip(dats[1::2], dats[2::2]):
+                stats[stat_name.replace(":", "")].append((tm, int(stat_val)))
+                if stat_name == "RX_PULLED:": RX_P = float(stat_val)
+                if stat_name == "BATCH_TOTAL:": stats['IOK_SATURATION'].append((tm, RX_P / float(stat_val)))
+    return stats
+
+@except_none
 def parse_utilization(dirn, experiment):
     fname = "{dirn}/mpstat.{server_hostname}.log".format(
         dirn=dirn, **experiment)
@@ -226,6 +234,9 @@ def parse_utilization(dirn, experiment):
     else:
         assert all(lambda l: l[cols['CPU']] == 'all', data)
 
+# % usr
+
+# 100.0 - %idle
     data = map(lambda l: (int(l[0]), 100. - float(l[-1])), data)
 
     if not "NODE" in headerln:
@@ -233,9 +244,8 @@ def parse_utilization(dirn, experiment):
 
     return data
 
-def parse_rstat(dirn, experiment, app_name):
-    # pass
-    fname = "{dirn}/rstat.{app_name}.log".format(dirn=dirn, app_name=app_name)
+def parse_rstat(app, directory):
+    fname = "{}/rstat.{}.log".format(directory, app['name'])
     try:
         with open(fname) as f:
             data = f.read().splitlines()
@@ -245,7 +255,7 @@ def parse_rstat(dirn, experiment, app_name):
 
     stat_vec = defaultdict(list)
 
-    float_match = "([+-]*\d+.\d+|NaN|Inf)"
+    float_match = "([+-]*\d+.\d+|NaN|[+-]Inf)"
     netln_match = "(\d+) net: RX {f} pkts, {f} bytes \| TX {f} pkts, {f} bytes \| {f} drops \| {f}% rx out of order \({f}% reorder time\)".format(f=float_match)
     schedln_match = "(\d+) sched: {f} rescheds \({f}% sched time, {f}% local\), {f} softirqs \({f}% stolen\), {f} %CPU, {f} parks \({f}% migrated\), {f} preempts \({f} stolen\)".format(f=float_match)
 
@@ -265,23 +275,23 @@ def parse_rstat(dirn, experiment, app_name):
         if match:
             ts = int(match.group(1))
             stat_vec['rescheds'].append((ts, float(match.group(2))))
-            stat_vec['schedtime%'].append((ts, float(match.group(3))))
-            stat_vec['localsched%'].append((ts, float(match.group(4))))
+            stat_vec['schedtimepct'].append((ts, float(match.group(3))))
+            stat_vec['localschedpct'].append((ts, float(match.group(4))))
             stat_vec['softirqs'].append((ts, float(match.group(5))))
-            stat_vec['stolenirq%'].append((ts, float(match.group(6))))
-            stat_vec['cpu%'].append((ts, float(match.group(7))))
+            stat_vec['stolenirqpct'].append((ts, float(match.group(6))))
+            stat_vec['cpupct'].append((ts, float(match.group(7))))
             stat_vec['parks'].append((ts, float(match.group(8))))
-            stat_vec['migrated%'].append((ts, float(match.group(9))))
+            stat_vec['migratedpct'].append((ts, float(match.group(9))))
             stat_vec['preempts'].append((ts, float(match.group(10))))
-            stat_vec['stolen%'].append((ts, float(match.group(11))))
+            stat_vec['stolenpct'].append((ts, float(match.group(11))))
             continue
         assert False, line
     return stat_vec
 
 def extract_window(datapoints, wct_start, duration_sec):
 
-    window_start = wct_start + int(duration_sec * 0.2)
-    window_end = wct_start + int(duration_sec * 0.8)
+    window_start = wct_start + int(duration_sec * 0.1)
+    window_end = wct_start + int(duration_sec * 0.9)
 
     datapoints = filter(lambda l: l[0] >= window_start and l[
         0] <= window_end, datapoints)
@@ -300,131 +310,136 @@ def extract_window(datapoints, wct_start, duration_sec):
 
     return avgmids
 
-def parse_dir(dirn):
-    files = os.listdir(dirn)
+
+def load_loadgen_results(experiment, dirname):
+    insts = [i for host in experiment['clients'] for i in experiment['clients'][host]]
+    if not insts:
+         insts = [i for i in experiment['apps'] if i.get('protocol') == 'synthetic'] # local synth;
+         print insts, [i for i in insts]
+         experiment['clients'][experiment['server_hostname']] = insts #[i for i in insts if i.get('protocol') == 'synthetic'] #experiment['apps'] #semicorrect
+    for inst in insts: #host in experiment['clients']:
+ #       for inst in experiment['clients'][host]:
+            filename = "{}/{}.out".format(dirname, inst['name'])
+            assert os.access(filename, os.F_OK)
+            data = parse_loadgen_output(filename)
+           # assert len(data) == inst['samples'], filename
+            if inst['name'] != "localsynth":
+	            server_handle = inst['name'].split(".")[1] 
+        	    app = next(app for app in experiment['apps'] if app['name'] == server_handle)
+            else:
+                    app = inst #local
+            if not 'loadgen' in app:
+                app['loadgen'] = data
+            else:
+                app['loadgen'] = merge_sample_sets(app['loadgen'], data)
+
+
+    for app in experiment['apps']:
+        if not 'loadgen' in app: continue
+        for sample in app['loadgen']:
+            latd = sample['latencies']
+            sample['p50'] = percentile(latd, 0.5)
+            sample['p90'] = percentile(latd, 0.9)
+            sample['p99'] = percentile(latd, 0.99)
+            sample['p999'] = percentile(latd, 0.999)
+            sample['p9999'] = percentile(latd, 0.9999)
+            del sample['latencies']
+            sample['app'] = app
+
+def parse_dir(dirname):
+    files = os.listdir(dirname)
     assert "config.json" in files
-    with open(dirn + "/config.json") as f:
-        experiment = json.loads(f.read())
+    with open(dirname + "/config.json") as f:
+         experiment = json.loads(f.read())
 
-    app_data = defaultdict(list)
-    num_data_points = None
+    load_loadgen_results(experiment, dirname)
 
-    to_parse = []
+    start_time = min(sample['time'] for app in experiment['apps'] for sample in app.get('loadgen', []))
 
-    for f in filter(lambda a: a.endswith(".out"), files):
-        fs = f.split(".")
-        if len(fs) != 3:
-            continue  # irg
-        # could probably remove this stuff
-        machine, app, _ = fs
-        machine = machine.split("-")[-1]
-        assert machine in ["zig", "zag"] or machine.startswith("pd")
-        to_parse.append(dirn + "/" + f)
-        continue
+    for app in experiment['apps']:
+        app['output'] = load_app_output(app, dirname, start_time)
+        app['rstat'] = parse_rstat(app, dirname)
 
-    if USE_PARALLEL:
-        import multiprocessing
-        p = multiprocessing.Pool()
-        expers = p.map(parse_file, to_parse)
-        p.close()
-        p.join()
-    else:
-        expers = map(parse_file, to_parse)
+    experiment['mpstat'] = parse_utilization(dirname, experiment)
+    experiment['ioklog'] = parse_iokernel_log(dirname, experiment)
 
-    num_data_points = len(expers[0])
-    assert all(len(e) == len(expers[0]) for e in expers)
-    assert num_data_points, str(files)
+    return experiment
 
-    for e in expers:
-        app_data[e[0]['app']].append(e)
+def arrange_2d_results(experiment):
+    # per start time: the 1 background app of choice, aggregate throughtput,  
+    # 1 line per start time per server application
 
-    app_data = map(lambda a: reduce(merge_experiments, app_data[a]), app_data)
+    by_time_point = zip(*(app['loadgen'] for app in experiment['apps'] if 'loadgen' in app))
+    bgs = [app for app in experiment['apps'] if app['output']]
+    # TODO support multiple bg apps
+    assert len(bgs) <= 1
+    bg = bgs[0] if bgs else None
 
-    first_time = [app[0] for app in app_data][0]['time']
-    bgapp, bgbase, bgdatapoints = parse_bg(dirn, files, first_time)
-    util_datapoints = parse_utilization(dirn, experiment)
+    runtime = experiment['clients'].itervalues().next()[0]['runtime']
 
-    rstats = {}
+    header1 = ["system", "app", "background", "transport", "spin", "nconns", "threads"]
+    header2 = ["offered", "achieved", "p50", "p90", "p99", "p999", "p9999", "distribution"]
+    header3 = ["tput", "baseline", "totaloffered", "totalachieved",
+              "totalcpu"] #, "localcpu", "ioksaturation"]
 
-    for points in app_data:
-        app_name = points[0]['app']
-        rstat_vec = parse_rstat(dirn, experiment, app_name)
-        if rstat_vec:
-            rstats[app_name] = rstat_vec
+    header = header1 + header2 + header3 + DISPLAYED_RSTAT_FIELDS
 
-    parse_tuple = (experiment, app_data, num_data_points,
-                   first_time, bgapp, bgbase, bgdatapoints, util_datapoints, rstats)
+    lines = [header]
+    ncons = 0
+    for list_pm in experiment['clients'].itervalues():
+        for i in list_pm: ncons += i['client_threads']
+#    nconns = sum(
 
-    return parse_tuple
-
-
-def stat_results(ptuple):
-
-    experiment, app_data, num_data_points, first_time, bgapp, bgbase, bgdatapoints, util_datapoints, rstats = ptuple
-
-    tmp = experiment['clients'].keys()[0]  # first client
-    tmp = experiment['clients'][tmp][0]  # list of cmds
-    if type(tmp) == unicode:  # 2 formats for now
-        assert False  # remove this case soon
-        runtime = int(tmp.split("--runtime ")[1].split()[0])
-    elif type(tmp) == dict:
-        runtime = tmp['runtime']
-
-    distributions = set([e['distribution'] for app in app_data for e in app])
-    if "zero" in distributions:
-        assert len(distributions) == 1
-
-    output_lines = []
-
-    header = ["system", "app", "background", "offered", "achieved", "p50", "p90", "p99",
-              "p999", "p9999", "tput", "baseline", "totaloffered", "totalachieved",
-              "totalcpu", "transport", "spin"]
-    if "zero" not in distributions:
-        header.append("distribution")
-    header += DISPLAYED_RSTAT_FIELDS
-    output_lines.append(header)
-
-    for i in range(num_data_points):
-        expers = [app[i] for app in app_data]
-        times = list(set([e['time'] for e in expers]))
-        assert len(times) < 3
-        if len(times) == 2:
-            assert abs(times[0] - times[1]) < 2
-
-        bgtput = 0
+    for time_point in by_time_point:
+        times = set(t['time'] for t in time_point)
+        #assert len(times) == 1 # all start times are the same
         time = times.pop()
-        if bgdatapoints:
-            bgtput = extract_window(bgdatapoints, time, runtime)
-
-        util = None
-        if util_datapoints:
-            util = extract_window(util_datapoints, time, runtime)
-
-        total_offered = sum([e['target'] for e in expers])
-        total_achieved = sum([e['achieved'] for e in expers])
-
-        spin = str("spin" in experiment['name'])
-        for e in expers:
-            out = [experiment['system'], e['app'], bgapp]
-            out += [e['target'], e['achieved']]
-            out += thelats(e['latencies'])
-            out += [bgtput, bgbase, total_offered, total_achieved, util, experiment['transport'], spin]
-            if "zero" not in distributions:
-                out += [e['distribution']]
+	if len(times) == 1: assert abs(times.pop() - time) <= 1
+	else: assert len(times) == 0
+        bgbaseline = bg['output']['recorded_baseline'] if bg else 0
+        bgtput = extract_window(bg['output']['recorded_samples'], time, runtime) if bg else 0
+	if bgtput is None: bgtput = 0
+        cpu = extract_window(experiment['mpstat'], time, runtime) if experiment['mpstat'] else None
+        total_offered = sum(t['offered'] for t in time_point)
+        total_achieved = sum(t['achieved'] for t in time_point)
+        iok_saturation = extract_window(experiment['ioklog']['IOK_SATURATION'], time, runtime) if experiment['ioklog'] else None
+        for point in time_point:
+            out = [experiment['system'], point['app']['app'], bg['app'] if bg else None, point['app'].get('transport', None), point['app']['spin'] > 1, ncons, point['app']['threads']]
+            out += [point[k] for k in header2]
+            out += [bgtput, bgbaseline, total_offered, total_achieved, cpu]
+            """if point['app']['rstat']:
+                out.append(extract_window(point['app']['rstat']['cpupct'], time, runtime))
+            else:
+                out.append(None)
+            out.append(iok_saturation)"""
             for field in DISPLAYED_RSTAT_FIELDS:
-                if rstats and e['app'] in rstats:
-                    out.append(extract_window(rstats[e['app']][field], time, runtime))
+		if point['app']['rstat']:
+			out.append(extract_window(point['app']['rstat'][field], time, runtime))
+		else:
+			out.append(None)
+            lines.append(out)
+        for bgl in bgs:
+            continue; out = [experiment['system'], bgl['app'], bg['app'] if bg else None, 
+                    None, bgl['spin'] > 1]
+            out += [0]*7 + [None]
+            out.append(extract_window(bgl['output']['recorded_samples'], time, runtime))
+            out.append(bgl['output']['recorded_baseline'])
+            out += [total_offered, total_achieved, cpu]
+            """if bgl['rstat']:
+                out.append(extract_window(bgl['rstat']['cpupct'], time, runtime))
+            else:
+                out.append(None)
+            out.append(iok_saturation)"""
+            for field in DISPLAYED_RSTAT_FIELDS:
+                if point['app']['rstat']:
+                        out.append(extract_window(point['app']['rstat'][field], time, runtime))
                 else:
-                    out.append(None)
-            output_lines.append(out)
+                        out.append(None)
+            lines.append(out)
 
-        if False:  # useful for multiapp R script to have this line
-            out = [experiment['system'], bgapp, bgapp]
-            out += [0] * 7
-            out += [bgtput, bgbase, total_offered, total_achieved]
-            output_lines.append(out)
+    return lines
 
-    return output_lines
+
 
 def rotate(output_lines):
     resdict = {}
@@ -434,168 +449,19 @@ def rotate(output_lines):
     return resdict
 
 
-def lat_time_series(points, outfile, ns_granularity=1e9):
-    plt.clf()
-    points.sort()
-    assert points == sorted(points, key=lambda l: l[0])
-
-    slice_points = []
-    cur_idx = 0
-    cur_idx_start = 0
-    while cur_idx <= len(points):
-        if cur_idx == len(points) or points[cur_idx][0] >= points[cur_idx_start][0] + ns_granularity:
-            slice_points.append((cur_idx_start, cur_idx))
-            cur_idx_start = cur_idx
-            if cur_idx == len(points): break
-            continue
-        cur_idx += 1
-
-    p999s = []
-    tputs = []
-
-    for start, end in slice_points:
-        latd = defaultdict(int)
-        dropped = 0
-        for i in xrange(start, end):
-            if points[i][1] < 0:
-                dropped += 1
-            else:
-                latd[points[i][1] // 1000] += 1
-        tputs.append(((end - start) * 1e9) / ns_granularity)
-        p999s.append(percentile((latd, dropped), 0.999))
-        del latd
-
-    # print "done w/ slice points"
-
-    plt.subplot(2, 1, 1).set_ylim(0, 1000)
-    plt.scatter(list(range(len(p999s))), p999s)
-    plt.ylabel("99.9% Latency (us)")
-
-    plt.subplot(2, 1, 2)
-    plt.scatter(list(range(len(p999s))), tputs)
-    plt.ylabel("Throughput - Achieved RPS")
-
-
-    plt.xlabel("Time")
-
-    plt.legend()
-    plt.savefig(outfile)
-
-def scatter_trace(points, outfile):
-
-    plt.clf()
-
-    if not points or not points[0]:
-        return
-
-    first_data_point = points[0][0]
-
-    tps = filter(lambda (a, b): b != -1, points)
-    dropped = filter(lambda (a,b): b == -1, points)
-
-    xs = [(tm[0] - first_data_point) // 1000 for tm in tps]
-    xd = [(tm[0] - first_data_point) // 1000 for tm in dropped]
-    ys = [tm[1] // 1000 for tm in tps]
-
-    # max_l = max(ys)
-
-    print len(tps), len(dropped)
-
-    plt.scatter(xs, ys)
-    plt.scatter(xd, [990 for i in range(len(xd))], c="orange", s=plt.rcParams['lines.markersize']*4)
-
-    plt.ylim(0, 1000)
-
-    plt.ylabel("Latency (us)")
-    plt.xlabel("Time (us)")
-
-    plt.savefig(outfile)
-
-
-def graph_experiment(bycols, outfile):
-    ## Tput-latency-perapp
-    all_apps = set(bycols['app'])
-    nlines = len(bycols['app'])
-
-    notput = set(bycols['tput']) == set([None])
-    nplots = 2 if notput else 3
-
-    plt.clf()
-    plt.subplot(nplots, 1, 1).set_ylim(0, 300)
-    plt.ylabel("99.9% latency (us)")
-
-    for app in all_apps:
-        idxs = set(i for i in range(nlines) if bycols['app'][i] == app)
-        xs = [bycols['achieved'][i] for i in range(nlines) if i in idxs]
-        ys = [bycols['p999'][i] for i in range(nlines) if i in idxs]
-        # xs = list(range(len(ys)))
-        if sum(ys) == 0:
-            continue
-        plt.plot(xs, ys, label=app)
-
-
-    # Be unnecessarily cautious here...
-    assert nlines % len(all_apps) == 0
-    actual_npoints = nlines / len(all_apps)
-    achieved = [bycols['totalachieved'][i * actual_npoints : (i + 1) * actual_npoints] for i in range(len(all_apps))]
-    assert all(a == achieved[0] for a in achieved)
-    cpu = [bycols['totalcpu'][i * actual_npoints : (i + 1) * actual_npoints] for i in range(len(all_apps))]
-    assert all(a == cpu[0] for a in cpu)
-    tput = [bycols['tput'][i * actual_npoints : (i + 1) * actual_npoints] for i in range(len(all_apps))]
-    assert all(a == tput[0] for a in tput)
-
-    plt.subplot(nplots, 1, 2).set_ylim(0, 100)
-    plt.ylabel("CPU Utilization (%)")
-    plt.plot(achieved[0], cpu[0], label="utilization")
-
-    if not notput:
-        plt.subplot(nplots, 1, 3).set_ylim(0, 200)
-        plt.ylabel("Background Throughput")
-        plt.plot(achieved[0], tput[0], label="throughput")
-
-    plt.xlabel("RPS")
-
-    plt.legend()
-    plt.savefig(outfile)
-
-
 def print_res(res):
     for line in res:
         print ",".join([str(x) for x in line])
 
 def do_it_all(dirname):
 
-    parsed_stuff = parse_dir(dirname)
-
-    stats = stat_results(parsed_stuff)
+    exp = parse_dir(dirname)
+    stats = arrange_2d_results(exp)
 
     bycol = rotate(stats)
 
     STAT_F = "{}/stats/".format(dirname)
     os.system("mkdir -p " + STAT_F)
-
-    graph_experiment(bycol, STAT_F + "graphs.png")
-
-    # for app in parsed_stuff[1]:
-    #     if "constant" in dirname.lower():
-    #         for i, dp in enumerate(app):
-    #             if 'tracepoints' in dp:
-    #                 scatter_trace(dp['tracepoints'], STAT_F + "trace-" + str(i) + ".png")
-    #                 # lat_time_series(dp['tracepoints'], STAT_F + "ts-1s-" + str(i) + ".png")
-    #                 # lat_time_series(dp['tracepoints'], STAT_F + "ts-0.5s-" + str(i) + ".png", 1e9/2)
-    #                 # lat_time_series(dp['tracepoints'], STAT_F + "ts-2s-" + str(i) + ".png", 1e9*2)
-    #     else:
-    #         if not all('tracepoints' in dp for dp in app):
-    #             continue
-    #         flat_points = []
-    #         for dp in app:
-    #             flat_points += dp['tracepoints']
-    #         scatter_trace(flat_points, STAT_F + "trace.png")
-    #         lat_time_series(flat_points, STAT_F + "ts-50ms.png", 5e7)
-    #         lat_time_series(flat_points, STAT_F + "ts-1s.png")
-    #         lat_time_series(flat_points, STAT_F + "ts-0.5s.png", 1e9/2)
-    #         lat_time_series(flat_points, STAT_F + "ts-2s.png", 1e9*2)
-
 
     with open(STAT_F + "stat.csv", "w") as f:
         for line in stats:

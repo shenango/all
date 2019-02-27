@@ -411,44 +411,6 @@ def assemble_local_synth(mrps, producers, consumers, time=10, samples=20, **kwar
     y['apps'].append(x)
     return y
 
-def multiapp_io(system, samples=None, bg='swaptions', spin=False):
-    assert system in ["shenango", "linux"]
-    x = new_experiment(system)
-    x['name'] += "-multiapp_io"
-
-    if system == "shenango":
-        max_memcached_mpps = 1.125
-        samples = samples or 45
-        dns_threads = 4
-        memcached_threads = 3
-        bg_threads = 22
-    else:
-        max_memcached_mpps = 0.3
-        samples = samples or 12
-        dns_threads = 24
-        memcached_threads = 5
-        bg_threads = 24
-
-    memcached_handle = new_memcached_server(memcached_threads, x)
-    dns_handle = new_gdnsd_server(dns_threads, x)
-
-    if spin:
-        assert system == "shenango"
-        dns_handle['spin'] = dns_threads
-        memcached_handle['spin'] = memcached_threads
-
-    if bg == "swaptions":
-        new_swaptions_inst(bg_threads, x)
-
-    new_measurement_instances(
-        len(CLIENT_SET) / 2, memcached_handle, max_memcached_mpps, x)
-    new_measurement_instances(
-        len(CLIENT_SET) / 2, dns_handle, 3 * max_memcached_mpps, x)
-    finalize_measurement_cohort(x, samples, 30)
-
-    return x
-
-
 def bench_memcached(system, thr, spin=False, bg=None, samples=55, time=10, mpps=6.0, noht=False, transport="tcp", nconns=1200, start_mpps=0.0):
     assert system in ["shenango", "linux", "arachne", "zygos"]
 
