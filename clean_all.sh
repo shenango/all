@@ -46,3 +46,5 @@ make -C $ROOTDIR/gdnsd-linux clean uninstall
 pushd bench/simnet
 cargo clean
 popd
+
+rm shenango/scripts/cstate

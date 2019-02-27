@@ -86,3 +86,6 @@ pushd bench/simnet
 cargo build --release
 popd
 
+pushd shenango/scripts
+gcc cstate.c -o cstate
+popd
