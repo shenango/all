@@ -37,8 +37,8 @@ binaries = {
         'zygos': "{}/memcached-ix/memcached".format(BASE_DIR)
     },
     'gdnsd': {
-        'linux': "{}/gdnsd-stripped/build/sbin/gdnsd".format(BASE_DIR),
-        'shenango': "{}/shenango-gdnsd/build/sbin/gdnsd".format(BASE_DIR)
+        'linux': "{}/gdnsd-linux/build/sbin/gdnsd".format(BASE_DIR),
+        'shenango': "{}/gdnsd/build/sbin/gdnsd".format(BASE_DIR)
     },
     'swaptions': {
         'linux': "{}/parsec/pkgs/apps/swaptions/inst/amd64-linux.gcc-pthreads/bin/swaptions".format(BASE_DIR),
