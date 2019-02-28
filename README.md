@@ -27,7 +27,8 @@ ZygOS, the spin server can be built with:
 ```
 make -C ./bench/servers spin-ix
 ```
-We built and ran ZygOS on Ubuntu 16.04.
+We built and ran ZygOS on Ubuntu 16.04; we built and ran everything
+else on Ubuntu 18.04.
 
 
 ## Running
@@ -38,11 +39,16 @@ directory and build it (the experiments will use the iokernel built
 there). Next, on the server, modify `experiment.py` so that the IPs,
 MACs, PCIe address, and interface name match those in your
 deployment. Also enable the experiments that you would like to run in
-`paper_experiments` in `experiment.py`. Then run the experiments:
+`paper_experiments` in `experiment.py`. Then run the main experiments:
 ```
 python experiment.py
 ```
 
+To run the threading benchmarks (Table 2), follow the instructions in
+shenango/apps/bench (for Shenango) and bench/threading (for the other
+systems). To run the latency experiment (Figure 6), follow the
+instructions in shenango/apps/dpdk_netperf for both building and
+running.
 
 ## Analyzing
 To process the results for the load shift experiment:
