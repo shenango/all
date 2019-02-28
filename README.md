@@ -42,11 +42,19 @@ deployment. Also enable the experiments that you would like to run in
 ```
 python experiment.py
 ```
+
+
+## Analyzing
 To process the results for the load shift experiment:
 ```
 python loadshift_process.py <results_directory>
 ```
-To process the results for other experiments:
+To process the results for all other experiments:
 ```
 python summary.py <results_directory>
 ```
+
+To reproduce the figures in the paper, install R and the packages
+ggplot2, plyr, and cowplot (e.g., with `install.packages()` in the R
+prompt).  Then run the R scripts in the scripts directory. Each script
+includes a description of its arguments.
